@@ -97,6 +97,7 @@ spec:
           args:
             - --v=5
             - --csi-address=/csi/csi.sock
+            - --provisioner=drydock.io/csi
             - --feature-gates=Topology=true
             - --enable-capacity=true
             - --leader-election=true
