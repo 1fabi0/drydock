@@ -28,9 +28,10 @@ spec:
     kind: Issuer
 ---
 apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
+kind: Issuer
 metadata:
-  name: {{ default (printf "%s-ca-issuer" (include "drydock.fullname" .)) .Values.tls.certManager.clusterIssuer }}
+  name: {{ include "drydock.issuerName" . }}
+  namespace: {{ include "drydock.namespace" . }}
   labels: {{- include "drydock.labels" . | nindent 4 }}
 spec:
   ca:

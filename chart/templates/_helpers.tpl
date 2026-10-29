@@ -56,14 +56,10 @@ Get the TLS secret name.
 {{- end -}}
 
 {{/*
-Get the ClusterIssuer name.
+Get the Issuer name.
 */}}
-{{- define "drydock.clusterIssuerName" -}}
-{{- if .Values.tls.certManager.clusterIssuer -}}
-{{- .Values.tls.certManager.clusterIssuer -}}
-{{- else -}}
+{{- define "drydock.issuerName" -}}
 {{- printf "%s-ca-issuer" (include "drydock.fullname" .) -}}
-{{- end -}}
 {{- end -}}
 
 {{/*

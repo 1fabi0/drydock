@@ -22,6 +22,6 @@ spec:
     - "*.{{ include "drydock.namespace" . }}.svc"
     - "*.{{ include "drydock.namespace" . }}.svc.cluster.local"
   issuerRef:
-    name: {{ include "drydock.clusterIssuerName" . }}
-    kind: ClusterIssuer
+    name: {{ include "drydock.issuerName" . }}
+    kind: Issuer
 {{- end }}

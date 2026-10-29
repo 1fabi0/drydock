@@ -32,7 +32,6 @@ network:
 tls:
   certManager:
     enabled: true
-    clusterIssuer: ""
     createSelfSignedCA: true
     secretName: ""
     duration: 2160h # 90 Days
