@@ -1,0 +1,27 @@
+{{- if .Values.tls.certManager.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "drydock.fullname" . }}-tls
+  namespace: {{ include "drydock.namespace" . }}
+  labels: {{- include "drydock.labels" . | nindent 4 }}
+spec:
+  secretName: {{ include "drydock.tlsSecretName" . }}
+  duration: {{ .Values.tls.certManager.duration }}
+  renewBefore: {{ .Values.tls.certManager.renewBefore }}
+  isCA: false
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  usages:
+    - server auth
+    - client auth
+  dnsNames:
+    - localhost
+    - "*.drydock"
+    - "*.{{ include "drydock.namespace" . }}.svc"
+    - "*.{{ include "drydock.namespace" . }}.svc.cluster.local"
+  issuerRef:
+    name: {{ include "drydock.clusterIssuerName" . }}
+    kind: ClusterIssuer
+{{- end }}

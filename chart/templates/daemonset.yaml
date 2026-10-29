@@ -1,0 +1,150 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "drydock.fullname" . }}
+  namespace: {{ include "drydock.namespace" . }}
+  labels: {{- include "drydock.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels: {{- include "drydock.matchLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "drydock.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "drydock.fullname" . }}
+      hostNetwork: {{ .Values.network.hostNetwork }}
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: drydock
+          image: "{{ .Values.image.repository }}:{{ default .Chart.AppVersion .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            privileged: true
+            allowPrivilegeEscalation: true
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: DryDock__LocalStorageRoot
+              value: {{ .Values.storage.hostStorageRoot | quote }}
+            - name: DryDock__CSIUnixSocketPath
+              value: /csi/csi.sock
+            - name: DryDock__StorageClassName
+              value: {{ .Values.storage.className | quote }}
+            - name: DryDock__VolumeSyncingPort
+              value: {{ .Values.network.http3Port | quote }}
+            - name: DryDock__CertPath
+              value: /certs/tls.crt
+            - name: DryDock__KeyPath
+              value: /certs/tls.key
+            - name: DryDock__CaCertPath
+              value: /certs/ca.crt
+            - name: PluginVersion
+              value: {{ default .Chart.AppVersion .Values.image.tag | quote }}
+            {{- if .Values.backup.enabled }}
+            - name: DryDock__IsBackupEnabled
+              value: "true"
+            - name: DryDock__BackupCronExpression
+              value: {{ .Values.backup.cronExpression | quote }}
+            - name: Drydock__BackupS3Endpoint
+              value: {{ .Values.backup.s3Endpoint | quote }}
+            - name: Drydock__BackupBucket
+              value: {{ .Values.backup.bucket | quote }}
+            - name: Drydock__S3AccessKey
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "drydock.backupSecretName" . }}
+                  key: AWS_ACCESS_KEY_ID
+            - name: Drydock__S3SecretKey
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "drydock.backupSecretName" . }}
+                  key: AWS_SECRET_ACCESS_KEY
+            {{- end }}
+          ports:
+            - name: quic-sync
+              containerPort: {{ .Values.network.http3Port }}
+              protocol: UDP
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+            - name: host-storage
+              mountPath: {{ .Values.storage.hostStorageRoot }}
+            - name: kubelet-pods-dir
+              mountPath: {{ .Values.kubelet.rootDir }}/pods
+              mountPropagation: Bidirectional
+            - name: certs
+              mountPath: /certs
+              readOnly: true
+
+        - name: node-driver-registrar
+          image: {{ .Values.sidecars.registrar.image }}
+          args:
+            - --v=5
+            - --csi-address=/csi/csi.sock
+            - --kubelet-registration-path={{ .Values.kubelet.rootDir }}/plugins/drydock.io/csi/csi.sock
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+            - name: registration-dir
+              mountPath: /registration
+
+        - name: csi-provisioner
+          image: {{ .Values.sidecars.provisioner.image }}
+          args:
+            - --v=5
+            - --csi-address=/csi/csi.sock
+            - --feature-gates=Topology=true
+            - --enable-capacity=true
+            - --leader-election=true
+            - --leader-election-namespace={{ include "drydock.namespace" . }}
+            - --leader-election-lease-duration=15s
+            - --leader-election-renew-deadline=10s
+            - --leader-election-retry-period=2s
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+
+      volumes:
+        - name: socket-dir
+          hostPath:
+            path: {{ .Values.kubelet.rootDir }}/plugins/drydock.io/csi
+            type: DirectoryOrCreate
+        - name: registration-dir
+          hostPath:
+            path: {{ .Values.kubelet.rootDir }}/plugins_registry
+            type: Directory
+        - name: kubelet-pods-dir
+          hostPath:
+            path: {{ .Values.kubelet.rootDir }}/pods
+            type: Directory
+        - name: host-storage
+          hostPath:
+            path: {{ .Values.storage.hostStorageRoot }}
+            type: DirectoryOrCreate
+        - name: certs
+          projected:
+            sources:
+              - secret:
+                  name: {{ include "drydock.tlsSecretName" . }}
+                  items:
+                    - key: tls.crt
+                      path: tls.crt
+                    - key: tls.key
+                      path: tls.key
+              {{- if .Values.tls.certManager.createSelfSignedCA }}
+              - secret:
+                  name: {{ include "drydock.fullname" . }}-root-ca-secret
+                  items:
+                    - key: tls.crt
+                      path: ca.crt
+              {{- else }}
+              - secret:
+                  name: {{ include "drydock.tlsSecretName" . }}
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+              {{- end }}

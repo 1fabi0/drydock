@@ -1,0 +1,10 @@
+apiVersion: v2
+name: drydock
+description: Lightweight Peer-to-Peer HostPath CSI Storage with HTTP/3 & S3 Disaster Recovery
+type: application
+version: 0.0.0
+appVersion: "0.0.0"
+dependencies:
+  - name: common
+    version: "2.x.x"
+    repository: "https://charts.bitnami.com/bitnami"
