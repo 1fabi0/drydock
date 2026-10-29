@@ -19,6 +19,7 @@ namespace DryDock.Configuration
         public string StorageClassName { get; set; } = "drydock";
         public int CapacityReportIntervalSeconds { get; set; } = 300;
         public string PluginVersion { get; set; } = "0.0.1";
+        public string PluginName { get; set; } = "1fabi0.drydock.io";
         public string BackupCronExpression { get; set; } = "0 2 * * *";
     }
 }

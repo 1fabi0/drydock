@@ -40,7 +40,9 @@ spec:
               value: /certs/tls.key
             - name: DryDock__CaCertPath
               value: /certs/ca.crt
-            - name: PluginVersion
+            - name: DryDock__PluginName
+              value: {{ include "drydock.driverName" . }}
+            - name: DryDock__PluginVersion
               value: {{ default .Chart.AppVersion .Values.image.tag | quote }}
             {{- if .Values.backup.enabled }}
             - name: DryDock__IsBackupEnabled
@@ -83,7 +85,7 @@ spec:
           args:
             - --v=5
             - --csi-address=/csi/csi.sock
-            - --kubelet-registration-path={{ .Values.kubelet.rootDir }}/plugins/drydock.io/csi/csi.sock
+            - --kubelet-registration-path={{ .Values.kubelet.rootDir }}/plugins/{{ include "drydock.driverName" . }}/csi.sock
           securityContext:
             privileged: true
           volumeMounts:
@@ -97,7 +99,7 @@ spec:
           args:
             - --v=5
             - --csi-address=/csi/csi.sock
-            - --provisioner=drydock.io/csi
+            - --provisioner={{ include "drydock.driverName" . }}
             - --feature-gates=Topology=true
             - --enable-capacity=true
             - --leader-election=true
@@ -112,7 +114,7 @@ spec:
       volumes:
         - name: socket-dir
           hostPath:
-            path: {{ .Values.kubelet.rootDir }}/plugins/drydock.io/csi
+            path: {{ .Values.kubelet.rootDir }}/plugins/{{ include "drydock.driverName" . }}
             type: DirectoryOrCreate
         - name: registration-dir
           hostPath:

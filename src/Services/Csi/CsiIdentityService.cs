@@ -7,12 +7,13 @@ namespace DryDock.Services.Csi
 {
     public class CsiIdentityService : Identity.IdentityBase
     {
-        public const string PluginName = "drydock.io/csi";
+        private readonly string _pluginName;
         private readonly string _pluginVersion;
 
         public CsiIdentityService(IOptions<DryDockOptions> options)
         {
             _pluginVersion = options.Value.PluginVersion;
+            _pluginName = options.Value.PluginName;
         }
 
         public override Task<GetPluginInfoResponse> GetPluginInfo(
@@ -20,7 +21,7 @@ namespace DryDock.Services.Csi
         {
             return Task.FromResult(new GetPluginInfoResponse
             {
-                Name = PluginName,
+                Name = _pluginName,
                 VendorVersion = _pluginVersion
             });
         }

@@ -65,3 +65,17 @@ Get the ClusterIssuer name.
 {{- printf "%s-ca-issuer" (include "drydock.fullname" .) -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Return the CSI driver name or fail with a clear message if invalid for metadata.name.
+*/}}
+{{- define "drydock.driverName" -}}
+{{- $rawName := required "A valid .Values.plugin.name is required!" .Values.plugin.name -}}
+{{- if contains "/" $rawName -}}
+  {{- fail (printf "Invalid plugin.name '%s': CSI driver names cannot contain '/' because Kubernetes uses it as metadata.name for the CSIDriver resource. Use dots or hyphens instead (e.g., '1fabi0.drydock.io' or 'csi.drydock.io')." $rawName) -}}
+{{- end -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" $rawName) -}}
+  {{- fail (printf "Invalid plugin.name '%s': Must be a valid RFC 1123 DNS subdomain (lowercase alphanumeric, '.' or '-', starting and ending with alphanumeric)." $rawName) -}}
+{{- end -}}
+{{- $rawName -}}
+{{- end -}}
