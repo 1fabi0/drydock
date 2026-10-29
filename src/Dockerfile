@@ -1,12 +1,12 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
-COPY ["Drydock.csproj", "./"]
-RUN dotnet restore "Drydock.csproj"
+COPY ["DryDock.csproj", "./"]
+RUN dotnet restore "DryDock.csproj"
 
 COPY . .
 
-RUN dotnet publish "Drydock.csproj" \
+RUN dotnet publish "DryDock.csproj" \
     -c Release \
     -o /app/publish \
     --no-restore \
@@ -22,4 +22,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=build /app/publish .
 
-ENTRYPOINT ["dotnet", "Drydock.dll"]
+ENTRYPOINT ["dotnet", "DryDock.dll"]
