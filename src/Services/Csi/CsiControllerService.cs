@@ -26,40 +26,34 @@ namespace DryDock.Services.Csi
         {
             _logger.LogInformation("CSI CreateVolume called: {VolumeName}", request.Name);
 
-            string volumeId = $"drydock-{request.Name}";
-
-            string? targetNode = null;
-            if (request.AccessibilityRequirements != null)
+            if (string.IsNullOrWhiteSpace(request.Name))
             {
-                foreach (var preference in request.AccessibilityRequirements.Preferred)
-                {
-                    if (preference.Segments.TryGetValue("kubernetes.io/hostname", out var node))
-                    {
-                        targetNode = node;
-                        break;
-                    }
-                }
+                throw new RpcException(new Status(StatusCode.InvalidArgument, "Volume Name must not be empty."));
             }
 
-            targetNode ??= _options.NodeName;
+            if (request.VolumeCapabilities == null || request.VolumeCapabilities.Count == 0)
+            {
+                throw new RpcException(new Status(StatusCode.InvalidArgument, "VolumeCapabilities must be provided."));
+            }
+
+            long requiredBytes = request.CapacityRange?.RequiredBytes ?? 1024L * 1024L * 1024L;
+            var volumeContext = new Dictionary<string, string>();
+
+            if (request.Parameters != null)
+            {
+                foreach (var (key, value) in request.Parameters)
+                {
+                    volumeContext[key] = value;
+                }
+            }
 
             var response = new CreateVolumeResponse
             {
                 Volume = new Volume
                 {
-                    VolumeId = volumeId,
-                    CapacityBytes = request.CapacityRange?.RequiredBytes ?? 1024L * 1024 * 1024,
-                    VolumeContext =
-                {
-                    ["sourceNode"] = targetNode
-                },
-                    AccessibleTopology =
-                {
-                    new Topology
-                    {
-                        Segments = { ["kubernetes.io/hostname"] = targetNode }
-                    }
-                }
+                    VolumeId = request.Name,
+                    CapacityBytes = requiredBytes,
+                    VolumeContext = { volumeContext }
                 }
             };
 
@@ -70,6 +64,11 @@ namespace DryDock.Services.Csi
             DeleteVolumeRequest request, ServerCallContext context)
         {
             _logger.LogInformation("CSI DeleteVolume called: {VolumeId}", request.VolumeId);
+
+            if (string.IsNullOrWhiteSpace(request.VolumeId))
+            {
+                throw new RpcException(new Status(StatusCode.InvalidArgument, "VolumeId must not be empty."));
+            }
 
             _storage.DeleteVolumeDirectory(request.VolumeId);
 
@@ -88,6 +87,55 @@ namespace DryDock.Services.Csi
                     Type = ControllerServiceCapability.Types.RPC.Types.Type.CreateDeleteVolume
                 }
             });
+
+            return Task.FromResult(response);
+        }
+
+        public override Task<ValidateVolumeCapabilitiesResponse> ValidateVolumeCapabilities(
+            ValidateVolumeCapabilitiesRequest request, ServerCallContext context)
+        {
+            if (string.IsNullOrWhiteSpace(request.VolumeId))
+            {
+                throw new RpcException(new Status(StatusCode.InvalidArgument, "VolumeId must not be empty."));
+            }
+
+            if (request.VolumeCapabilities == null || request.VolumeCapabilities.Count == 0)
+            {
+                throw new RpcException(new Status(StatusCode.InvalidArgument, "VolumeCapabilities must be provided."));
+            }
+
+            bool isSupported = true;
+
+            foreach (var capability in request.VolumeCapabilities)
+            {
+                var mode = capability.AccessMode?.Mode;
+                if (mode != VolumeCapability.Types.AccessMode.Types.Mode.SingleNodeSingleWriter 
+                && mode != VolumeCapability.Types.AccessMode.Types.Mode.SingleNodeWriter)
+                {
+                    isSupported = false;
+                    break;
+                }
+
+                if (capability.AccessTypeCase != VolumeCapability.AccessTypeOneofCase.Mount)
+                {
+                    isSupported = false;
+                    break;
+                }
+            }
+
+            var response = new ValidateVolumeCapabilitiesResponse();
+
+            if (isSupported)
+            {
+                response.Confirmed = new ValidateVolumeCapabilitiesResponse.Types.Confirmed
+                {
+                    VolumeCapabilities = { request.VolumeCapabilities }
+                };
+            }
+            else
+            {
+                response.Message = "Drydock only supports Mount volume capability with SingleNodeWriter (ReadWriteOnce) access mode.";
+            }
 
             return Task.FromResult(response);
         }

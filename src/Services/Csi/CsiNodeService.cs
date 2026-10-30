@@ -1,24 +1,30 @@
+using System.Text.Json;
 using Csi.V1;
 using Drydock.Interop;
 using DryDock.Configuration;
 using DryDock.Contract;
 using Grpc.Core;
+using k8s;
+using k8s.Models;
 using Microsoft.Extensions.Options;
 
 namespace DryDock.Services.Csi
 {
     public class CsiNodeService : Node.NodeBase
     {
+        private const string OwnerAnnotationKey = "drydock.io/current-node";
         private readonly IStorageManager _storage;
         private readonly IPeerSyncClient _peerSync;
         private readonly IBackupClient _backup;
         private readonly DryDockOptions _options;
+        private readonly IKubernetes _k8sClient;
         private readonly ILogger _logger;
 
         public CsiNodeService(
         IStorageManager storage,
         IPeerSyncClient peerSync,
         IBackupClient backup,
+        IKubernetes k8sClient,
         IOptions<DryDockOptions> options,
         ILogger<CsiNodeService> logger)
         {
@@ -27,6 +33,7 @@ namespace DryDock.Services.Csi
             _backup = backup;
             _logger = logger;
             _options = options.Value;
+            _k8sClient = k8sClient;
         }
 
         public override async Task<NodePublishVolumeResponse> NodePublishVolume(
@@ -34,30 +41,147 @@ namespace DryDock.Services.Csi
         {
             string volumeId = request.VolumeId;
             string targetPath = request.TargetPath;
+
+            if (string.IsNullOrWhiteSpace(volumeId))
+            {
+                throw new RpcException(new Status(StatusCode.InvalidArgument, "VolumeId must be specified."));
+            }
+
+            if (string.IsNullOrWhiteSpace(targetPath))
+            {
+                throw new RpcException(new Status(StatusCode.InvalidArgument, "TargetPath must be specified."));
+            }
+
             string localSourcePath = _storage.GetVolumeDirectory(volumeId);
 
             if (!_storage.ExistsAndHasData(volumeId))
             {
-                _logger.LogInformation("Volume {VolumeId} not found locally. Starting sync...", volumeId);
-
-                request.VolumeContext.TryGetValue("sourceNode", out var sourceNode);
-
-                bool synced = false;
-                if (!string.IsNullOrEmpty(sourceNode))
+                string? lastKnownNode = await GetVolumeOwnerNodeAsync(volumeId, context.CancellationToken);
+                if (string.IsNullOrEmpty(lastKnownNode))
                 {
-                    synced = await _peerSync.TryPullVolumeAsync(sourceNode, volumeId, localSourcePath, context.CancellationToken);
+                    _logger.LogInformation("Volume {VolumeId} is new (no owner annotated). Initializing local directory on {NodeName}.", volumeId, _options.NodeName);
+
+                    _storage.EnsureVolumeDirectoryCreated(volumeId);
                 }
-
-                if (!synced)
+                else if (string.Equals(lastKnownNode, _options.NodeName, StringComparison.OrdinalIgnoreCase))
                 {
-                    _logger.LogWarning("P2P Sync failed for Volume {VolumeId}. Attempting backup restore...", volumeId);
-                    await _backup.DownloadVolumeAsync(volumeId, localSourcePath, context.CancellationToken);
+                    _logger.LogWarning("Volume {VolumeId} was owned by this node ({NodeName}), but local data is missing.", volumeId, _options.NodeName);
+
+                    bool restored = false;
+                    if (_options.IsBackupEnabled)
+                    {
+                        restored = await TryRestoreFromBackupAsync(volumeId, localSourcePath, context.CancellationToken);
+                    }
+
+                    if (!restored)
+                    {
+                        throw new RpcException(new Status(StatusCode.Unavailable, $"Failed to find {volumeId} on node '{lastKnownNode}' and backup was not available."));
+                    }
+                }
+                else
+                {
+                    _logger.LogInformation("Volume {VolumeId} last known on remote node {RemoteNode}. Initiating P2P pull to {LocalNode}...", volumeId, lastKnownNode, _options.NodeName);
+
+                    bool synced = await _peerSync.TryPullVolumeAsync(lastKnownNode, volumeId, localSourcePath, context.CancellationToken);
+
+                    if (!synced && _options.IsBackupEnabled)
+                    {
+                        _logger.LogWarning("P2P Sync failed for {VolumeId}. Falling back to backup restore...", volumeId);
+                        synced = await TryRestoreFromBackupAsync(volumeId, localSourcePath, context.CancellationToken);
+                    }
+
+                    if (!synced && !_storage.ExistsAndHasData(volumeId))
+                    {
+                        throw new RpcException(new Status(StatusCode.Unavailable, $"Failed to synchronize volume {volumeId} from peer '{lastKnownNode}' and backup was not available."));
+                    }
                 }
             }
 
-            LinuxMount.BindMount(localSourcePath, targetPath);
+            _storage.EnsureVolumeDirectoryCreated(volumeId);
+            Directory.CreateDirectory(targetPath);
+
+            try
+            {
+                LinuxMount.BindMount(localSourcePath, targetPath);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to bind mount {Source} to {Target}", localSourcePath, targetPath);
+                throw new RpcException(new Status(StatusCode.Internal, $"Mount operation failed: {ex.Message}"));
+            }
+
+            await UpdateVolumeOwnerAnnotationAsync(volumeId, _options.NodeName, context.CancellationToken);
 
             return new NodePublishVolumeResponse();
+        }
+
+        private async Task<string?> GetVolumeOwnerNodeAsync(string volumeId, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var pv = await _k8sClient.CoreV1.ReadPersistentVolumeAsync(volumeId, cancellationToken: cancellationToken);
+                if (pv.Metadata?.Annotations != null &&
+                    pv.Metadata.Annotations.TryGetValue(OwnerAnnotationKey, out var ownerNode) &&
+                    !string.IsNullOrWhiteSpace(ownerNode))
+                {
+                    return ownerNode;
+                }
+            }
+            catch (k8s.Autorest.HttpOperationException ex) when (ex.Response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                _logger.LogWarning("PersistentVolume {VolumeId} not found in K8s API.", volumeId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error reading PersistentVolume {VolumeId} to resolve owner node.", volumeId);
+            }
+
+            return null;
+        }
+
+        private async Task UpdateVolumeOwnerAnnotationAsync(string volumeId, string currentNode, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var patchObject = new
+                {
+                    metadata = new
+                    {
+                        annotations = new Dictionary<string, string>
+                        {
+                            [OwnerAnnotationKey] = currentNode
+                        }
+                    }
+                };
+
+                var patchJson = JsonSerializer.Serialize(patchObject);
+                var patch = new V1Patch(patchJson, V1Patch.PatchType.MergePatch);
+
+                await _k8sClient.CoreV1.PatchPersistentVolumeAsync(
+                    patch,
+                    name: volumeId,
+                    cancellationToken: cancellationToken);
+
+                _logger.LogInformation("Updated PV {VolumeId} owner annotation to '{NodeName}'.", volumeId, currentNode);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to patch owner annotation on PersistentVolume {VolumeId}.", volumeId);
+            }
+        }
+
+        private async Task<bool> TryRestoreFromBackupAsync(string volumeId, string targetPath, CancellationToken cancellationToken)
+        {
+            try
+            {
+                await _backup.DownloadVolumeAsync(volumeId, targetPath, cancellationToken);
+                return _storage.ExistsAndHasData(volumeId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Backup restore attempt failed for volume {VolumeId}.", volumeId);
+                return false;
+            }
         }
 
         public override Task<NodeUnpublishVolumeResponse> NodeUnpublishVolume(

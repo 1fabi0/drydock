@@ -12,6 +12,9 @@ metadata:
   labels: {{- include "drydock.labels" . | nindent 4 }}
 rules:
   - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
     resources: ["nodes"]
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]

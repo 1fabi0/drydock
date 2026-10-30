@@ -79,7 +79,7 @@ namespace DryDock.Services.Background
 
                             existsOnCluster = true;
                             lastReportedBytes = availableBytes;
-                            _logger.LogInformation("CSIStorageCapacity {Name} initial erstellt mit {Bytes} Bytes.", resourceName, availableBytes);
+                            _logger.LogInformation("CSIStorageCapacity {Name} initially created in {Namespace} with {Bytes} Bytes.", resourceName, targetNamespace, availableBytes);
                         }
                         catch (k8s.Autorest.HttpOperationException ex) when (ex.Response.StatusCode == System.Net.HttpStatusCode.Conflict)
                         {
@@ -104,7 +104,7 @@ namespace DryDock.Services.Background
                             cancellationToken: stoppingToken);
 
                         lastReportedBytes = availableBytes;
-                        _logger.LogDebug("CSIStorageCapacity {Name} aktualisiert auf {Bytes} Bytes.", resourceName, availableBytes);
+                        _logger.LogDebug("CSIStorageCapacity {Name} in {Namespace} refreshed with {Bytes} Bytes.", resourceName, targetNamespace, availableBytes);
                     }
                 }
                 catch (k8s.Autorest.HttpOperationException ex) when (ex.Response.StatusCode == System.Net.HttpStatusCode.NotFound)
@@ -114,7 +114,7 @@ namespace DryDock.Services.Background
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Fehler beim Melden der CSI Storage Capacity.");
+                    _logger.LogError(ex, "Failed to report CSIStorageCapacity for node {NodeName}.", _options.NodeName);
                 }
 
                 await Task.Delay(TimeSpan.FromSeconds(_options.CapacityReportIntervalSeconds), stoppingToken);
