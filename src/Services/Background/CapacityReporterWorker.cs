@@ -23,6 +23,15 @@ namespace DryDock.Services.Background
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
+            var resourceName = $"drydock-cap-{_options.NodeName.ToLowerInvariant().Trim('-')}";
+            const string targetNamespace = "kube-system";
+
+            long? lastReportedBytes = null;
+            bool existsOnCluster = false;
+
+            // Schwellenwert: Nur melden, wenn sich der Speicher um mehr als z. B. 100 MB geändert hat
+            const long changeThresholdBytes = 100 * 1024 * 1024;
+
             while (!stoppingToken.IsCancellationRequested)
             {
                 try
@@ -30,34 +39,78 @@ namespace DryDock.Services.Background
                     var drive = new DriveInfo(_options.LocalStorageRoot);
                     long availableBytes = drive.AvailableFreeSpace;
 
-                    var node = await _k8s.CoreV1.ReadNodeAsync(_options.NodeName, cancellationToken: stoppingToken);
-                    var topologyLabels = node.Metadata.Labels;
+                    bool hasSignificantChange = lastReportedBytes == null ||
+                                               Math.Abs(availableBytes - lastReportedBytes.Value) >= changeThresholdBytes;
 
-                    var capacity = new V1CSIStorageCapacity
+                    if (!hasSignificantChange && existsOnCluster)
                     {
-                        ApiVersion = "storage.k8s.io/v1",
-                        Kind = "CSIStorageCapacity",
-                        Metadata = new V1ObjectMeta
+                        await Task.Delay(TimeSpan.FromSeconds(_options.CapacityReportIntervalSeconds), stoppingToken);
+                        continue;
+                    }
+
+                    if (!existsOnCluster)
+                    {
+                        var capacity = new V1CSIStorageCapacity
                         {
-                            Name = $"drydock-cap-{_options.NodeName.ToLowerInvariant()}",
-                            NamespaceProperty = "kube-system"
-                        },
-                        StorageClassName = _options.StorageClassName,
-                        Capacity = new ResourceQuantity($"{availableBytes}"),
-                        NodeTopology = new V1LabelSelector
+                            ApiVersion = "storage.k8s.io/v1",
+                            Kind = "CSIStorageCapacity",
+                            Metadata = new V1ObjectMeta
+                            {
+                                Name = resourceName,
+                                NamespaceProperty = targetNamespace
+                            },
+                            StorageClassName = _options.StorageClassName,
+                            Capacity = new ResourceQuantity($"{availableBytes}"),
+                            NodeTopology = new V1LabelSelector
+                            {
+                                MatchLabels = new Dictionary<string, string>
+                                {
+                                    ["kubernetes.io/hostname"] = _options.NodeName
+                                }
+                            }
+                        };
+
+                        try
                         {
-                            MatchLabels = topologyLabels
+                            await _k8s.StorageV1.CreateNamespacedCSIStorageCapacityAsync(
+                                capacity,
+                                targetNamespace,
+                                cancellationToken: stoppingToken);
+
+                            existsOnCluster = true;
+                            lastReportedBytes = availableBytes;
+                            _logger.LogInformation("CSIStorageCapacity {Name} initial erstellt mit {Bytes} Bytes.", resourceName, availableBytes);
                         }
-                    };
+                        catch (k8s.Autorest.HttpOperationException ex) when (ex.Response.StatusCode == System.Net.HttpStatusCode.Conflict)
+                        {
+                            existsOnCluster = true;
+                        }
+                    }
 
-                    try
+                    if (existsOnCluster && hasSignificantChange)
                     {
-                        await _k8s.StorageV1.CreateNamespacedCSIStorageCapacityAsync(capacity, "kube-system", cancellationToken: stoppingToken);
+                        var patchDoc = $$"""
+                            {
+                                "capacity": "{{availableBytes}}"
+                            }
+                        """;
+
+                        var patch = new V1Patch(patchDoc, V1Patch.PatchType.MergePatch);
+
+                        await _k8s.StorageV1.PatchNamespacedCSIStorageCapacityAsync(
+                            patch,
+                            resourceName,
+                            targetNamespace,
+                            cancellationToken: stoppingToken);
+
+                        lastReportedBytes = availableBytes;
+                        _logger.LogDebug("CSIStorageCapacity {Name} aktualisiert auf {Bytes} Bytes.", resourceName, availableBytes);
                     }
-                    catch (k8s.Autorest.HttpOperationException ex) when (ex.Response.StatusCode == System.Net.HttpStatusCode.Conflict)
-                    {
-                        await _k8s.StorageV1.ReplaceNamespacedCSIStorageCapacityAsync(capacity, capacity.Metadata.Name, "kube-system", cancellationToken: stoppingToken);
-                    }
+                }
+                catch (k8s.Autorest.HttpOperationException ex) when (ex.Response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                {
+                    existsOnCluster = false;
+                    lastReportedBytes = null;
                 }
                 catch (Exception ex)
                 {
