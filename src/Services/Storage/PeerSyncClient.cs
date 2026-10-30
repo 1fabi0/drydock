@@ -1,6 +1,7 @@
 using DryDock.Configuration;
 using DryDock.Contract;
 using DryDock.Util;
+using k8s;
 using Microsoft.Extensions.Options;
 
 namespace DryDock.Services.Storage
@@ -8,20 +9,49 @@ namespace DryDock.Services.Storage
     public class PeerSyncClient : IPeerSyncClient
     {
         private readonly HttpClient _httpClient;
+        private readonly IKubernetes _k8sClient;
         private readonly ILogger _logger;
         private readonly DryDockOptions _options;
 
-        public PeerSyncClient(HttpClient httpClient, ILogger<PeerSyncClient> logger, IOptions<DryDockOptions> options)
+        public PeerSyncClient(HttpClient httpClient, ILogger<PeerSyncClient> logger, IOptions<DryDockOptions> options, IKubernetes k8sClient)
         {
             _httpClient = httpClient;
             _logger = logger;
             _options = options.Value;
+            _k8sClient = k8sClient;
+        }
+
+        public async Task<string> ResolveTargetNodeAddressAsync(
+            string targetNodeName,
+            CancellationToken ct = default)
+        {
+            var podList = await _k8sClient.CoreV1.ListNamespacedPodAsync(
+                namespaceParameter: _options.Namespace,
+                labelSelector: _options.MatchLabels,
+                fieldSelector: $"spec.nodeName={targetNodeName}",
+                cancellationToken: ct);
+
+            var targetPod = podList.Items.FirstOrDefault(p =>
+                p.Status.Phase == "Running" &&
+                p.Status.Conditions.Any(c => c.Type == "Ready" && c.Status == "True"));
+
+            if (targetPod?.Status?.PodIP != null)
+            {
+                return targetPod.Status.PodIP;
+            }
+
+            var node = await _k8sClient.CoreV1.ReadNodeAsync(targetNodeName, cancellationToken: ct);
+            var nodeIp = node.Status.Addresses
+                .FirstOrDefault(a => a.Type == "InternalIP")?.Address;
+
+            return nodeIp ?? throw new InvalidOperationException(
+                $"Could not resolve neither Pod-IP nor InternalIP for node '{targetNodeName}'");
         }
 
         public async Task<bool> TryPullVolumeAsync(string sourceNode, string volumeId, string localSourcePath, CancellationToken cancellationToken)
         {
             string stagingDir = $"{localSourcePath}.staging-{Guid.NewGuid():N}";
-            string url = $"https://{sourceNode}:{_options.VolumeSyncingPort}/api/volumes/{volumeId}/stream";
+            string url = $"https://{await ResolveTargetNodeAddressAsync(sourceNode, cancellationToken)}:{_options.VolumeSyncingPort}/api/volumes/{volumeId}/stream";
 
             try
             {

@@ -34,6 +34,19 @@ Match labels for selectors.
 {{- end -}}
 
 {{/*
+Match labels as a comma-separated selector string for API queries: key1=val1,key2=val2
+*/}}
+{{- define "drydock.matchLabelsSelector" -}}
+{{- $labelsYaml := include "drydock.matchLabels" . -}}
+{{- $labelsDict := fromYaml $labelsYaml -}}
+{{- $pairs := list -}}
+{{- range $k, $v := $labelsDict -}}
+  {{- $pairs = append $pairs (printf "%s=%s" $k ($v | toString)) -}}
+{{- end -}}
+{{- join "," $pairs -}}
+{{- end -}}
+
+{{/*
 Get the S3 secret name.
 */}}
 {{- define "drydock.backupSecretName" -}}

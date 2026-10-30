@@ -21,5 +21,7 @@ namespace DryDock.Configuration
         public string PluginVersion { get; set; } = "0.0.1";
         public string PluginName { get; set; } = "1fabi0.drydock.io";
         public string BackupCronExpression { get; set; } = "0 2 * * *";
+        public string Namespace { get; set; } = "default";
+        public string MatchLabels { get; set; } = string.Empty;
     }
 }

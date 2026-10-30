@@ -4,12 +4,14 @@ using Amazon.S3;
 using DryDock.Configuration;
 using DryDock.Contract;
 using DryDock.Services.Background;
+using DryDock.Services.Certificate;
 using DryDock.Services.Csi;
 using DryDock.Services.Storage;
 using DryDock.Util;
 using KubeOps.Abstractions.Builder;
 using KubeOps.Operator;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.AspNetCore.Server.Kestrel.Https;
 
 namespace DryDock
 {
@@ -22,6 +24,11 @@ namespace DryDock
             var drydockConfig = builder.Configuration.GetSection(DryDockOptions.Section);
             builder.Services.Configure<DryDockOptions>(drydockConfig);
             var options = drydockConfig.Get<DryDockOptions>() ?? new DryDockOptions();
+
+            builder.WebHost.UseQuic(quicOptions =>
+            {
+                quicOptions.MaxBidirectionalStreamCount = 200;
+            });
 
             builder.WebHost.ConfigureKestrel(serverOptions =>
             {
@@ -37,20 +44,17 @@ namespace DryDock
                 serverOptions.ListenAnyIP(options.VolumeSyncingPort, listenOptions =>
                 {
                     listenOptions.Protocols = HttpProtocols.Http3;
-                    if (File.Exists(options.CertPath) && File.Exists(options.KeyPath))
+                    listenOptions.UseHttps(httpsOptions =>
                     {
-                        // Lädt Zertifikate dynamisch, damit cert-manager Rotationen ohne Pod-Restart greifen
-                        listenOptions.UseHttps(httpsOptions =>
+                        httpsOptions.ServerCertificateSelector = (_, _) =>
+                            listenOptions.ApplicationServices.GetRequiredService<ICertificateHolder>().GetCertificate();
+                        httpsOptions.ClientCertificateMode = ClientCertificateMode.RequireCertificate;
+
+                        httpsOptions.ClientCertificateValidation = (cert, chain, errors) =>
                         {
-                            httpsOptions.ServerCertificateSelector = (_, _) =>
-                                X509Certificate2.CreateFromPemFile(options.CertPath, options.KeyPath);
-                        });
-                    }
-                    else
-                    {
-                        throw new FileNotFoundException(
-                            $"TLS certificate not found. Ensure secrets are mounted at: {options.CertPath} and {options.KeyPath}");
-                    }
+                            return listenOptions.ApplicationServices.GetRequiredService<ICertificateHolder>().ValidateRemoteCertificate(cert);
+                        };
+                    });
                 });
             });
 
@@ -60,6 +64,7 @@ namespace DryDock
                 kubeOptions.Name = "drydock";
             });
 
+            builder.Services.AddSingleton<ICertificateHolder, CertificateHolder>();
             builder.Services.AddSingleton<IStorageManager, LocalStorageManager>();
             builder.Services.AddHttpClient<IPeerSyncClient, PeerSyncClient>(client =>
             {

@@ -44,6 +44,10 @@ spec:
               value: {{ include "drydock.driverName" . }}
             - name: DryDock__PluginVersion
               value: {{ default .Chart.AppVersion .Values.image.tag | quote }}
+            - name: DryDock__Namespace
+              value: {{ include "drydock.namespace" . | quote }}
+            - name: DryDock__MatchLabels
+              value: {{ include "drydock.matchLabelsSelector" . | quote }}
             {{- if .Values.backup.enabled }}
             - name: DryDock__IsBackupEnabled
               value: "true"
