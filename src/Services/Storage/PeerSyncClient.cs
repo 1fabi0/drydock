@@ -1,6 +1,7 @@
 using DryDock.Configuration;
 using DryDock.Contract;
 using DryDock.Util;
+using Grpc.Core;
 using k8s;
 using Microsoft.Extensions.Options;
 
@@ -19,6 +20,71 @@ namespace DryDock.Services.Storage
             _logger = logger;
             _options = options.Value;
             _k8sClient = k8sClient;
+        }
+
+        public async Task DeleteVolumeOnAllPeersAsync(string volumeId, CancellationToken cancellationToken)
+        {
+            var podList = await _k8sClient.CoreV1.ListNamespacedPodAsync(
+                namespaceParameter: _options.Namespace,
+                labelSelector: _options.MatchLabels,
+                cancellationToken: cancellationToken);
+
+            var eligiblePods = podList.Items
+                .Where(pod => pod.Status.Phase == "Running" &&
+                              pod.Status.Conditions.Any(c => c.Type == "Ready" && c.Status == "True"))
+                .Where(pod => !string.Equals(pod.Spec.NodeName, _options.NodeName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            var deleteTasks = eligiblePods.Select(async pod =>
+            {
+                string targetNodeName = pod.Spec.NodeName;
+                string? targetNodeAddress = pod.Status?.PodIP;
+
+                if (string.IsNullOrEmpty(targetNodeAddress))
+                {
+                    var node = await _k8sClient.CoreV1.ReadNodeAsync(targetNodeName, cancellationToken: cancellationToken);
+                    targetNodeAddress = node.Status.Addresses
+                        .FirstOrDefault(a => a.Type == "InternalIP")?.Address;
+                }
+
+                if (string.IsNullOrEmpty(targetNodeAddress))
+                {
+                    _logger.LogWarning("Could not resolve IP address for node {NodeName}. Skipping volume deletion on this node.", targetNodeName);
+                    return;
+                }
+
+                string url = $"https://{targetNodeAddress}:{_options.VolumeSyncingPort}/api/volumes/{volumeId}/delete";
+
+                try
+                {
+                    using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+
+                    var response = await _httpClient.DeleteAsync(url, linkedCts.Token);
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        _logger.LogWarning("Failed to delete volume {VolumeId} on node {NodeName}. HTTP {Status}", volumeId, targetNodeName, response.StatusCode);
+                        throw new RpcException(new Status(StatusCode.Internal, $"Failed to delete volume {volumeId} on node {targetNodeName}. HTTP {response.StatusCode}"));
+                    }
+                    else
+                    {
+                        _logger.LogInformation("Successfully deleted volume {VolumeId} on node {NodeName}.", volumeId, targetNodeName);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error while deleting volume {VolumeId} on node {NodeName}.", volumeId, targetNodeName);
+                    throw new RpcException(new Status(StatusCode.Internal, $"Error while deleting volume {volumeId} on node {targetNodeName}: {ex.Message}"));
+                }
+            });
+
+            await Task.WhenAll(deleteTasks);
+
+            if (eligiblePods.Count < podList.Items.Count - 1)
+            {
+                _logger.LogWarning("Volume {VolumeId} deletion was not attempted on all eligible nodes. Some nodes may not have been reachable or ready.", volumeId);
+                throw new RpcException(new Status(StatusCode.Unavailable, $"Volume {volumeId} deletion was not attempted on all eligible nodes. Some nodes may not have been reachable or ready."));
+            }
         }
 
         public async Task<string> ResolveTargetNodeAddressAsync(

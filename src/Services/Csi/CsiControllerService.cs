@@ -11,14 +11,17 @@ namespace DryDock.Services.Csi
         private readonly IStorageManager _storage;
         private readonly DryDockOptions _options;
         private readonly ILogger _logger;
+        private readonly IPeerSyncClient _peerSync;
         public CsiControllerService(
-        IStorageManager storage,
-        IOptions<DryDockOptions> options,
-        ILogger<CsiControllerService> logger)
+            IStorageManager storage,
+            IOptions<DryDockOptions> options,
+            IPeerSyncClient peerSync,
+            ILogger<CsiControllerService> logger)
         {
             _storage = storage;
             _options = options.Value;
             _logger = logger;
+            _peerSync = peerSync;
         }
 
         public override Task<CreateVolumeResponse> CreateVolume(
@@ -60,7 +63,7 @@ namespace DryDock.Services.Csi
             return Task.FromResult(response);
         }
 
-        public override Task<DeleteVolumeResponse> DeleteVolume(
+        public override async Task<DeleteVolumeResponse> DeleteVolume(
             DeleteVolumeRequest request, ServerCallContext context)
         {
             _logger.LogInformation("CSI DeleteVolume called: {VolumeId}", request.VolumeId);
@@ -71,8 +74,9 @@ namespace DryDock.Services.Csi
             }
 
             _storage.DeleteVolumeDirectory(request.VolumeId);
+            await _peerSync.DeleteVolumeOnAllPeersAsync(request.VolumeId, context.CancellationToken);
 
-            return Task.FromResult(new DeleteVolumeResponse());
+            return new DeleteVolumeResponse();
         }
 
         public override Task<ControllerGetCapabilitiesResponse> ControllerGetCapabilities(
