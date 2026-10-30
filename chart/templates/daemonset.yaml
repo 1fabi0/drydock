@@ -22,7 +22,7 @@ spec:
             privileged: true
             allowPrivilegeEscalation: true
           env:
-            - name: NODE_NAME
+            - name: DryDock__NodeName
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
@@ -103,9 +103,6 @@ spec:
           args:
             - --v=5
             - --csi-address=/csi/csi.sock
-            - --provisioner={{ include "drydock.driverName" . }}
-            - --feature-gates=Topology=true
-            - --enable-capacity=true
             - --leader-election=true
             - --leader-election-namespace={{ include "drydock.namespace" . }}
             - --leader-election-lease-duration=15s
