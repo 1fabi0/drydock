@@ -54,16 +54,22 @@ namespace DryDock.Services.Csi
 
             string localSourcePath = _storage.GetVolumeDirectory(volumeId);
 
-            if (!_storage.ExistsAndHasData(volumeId))
-            {
-                string? lastKnownNode = await GetVolumeOwnerNodeAsync(volumeId, context.CancellationToken);
-                if (string.IsNullOrEmpty(lastKnownNode))
-                {
-                    _logger.LogInformation("Volume {VolumeId} is new (no owner annotated). Initializing local directory on {NodeName}.", volumeId, _options.NodeName);
+            string? lastKnownNode = await GetVolumeOwnerNodeAsync(volumeId, context.CancellationToken);
 
-                    _storage.EnsureVolumeDirectoryCreated(volumeId);
+            if (string.IsNullOrEmpty(lastKnownNode))
+            {
+                _logger.LogInformation("Volume {VolumeId} is new (no owner annotated). Initializing local directory on {NodeName}.", volumeId, _options.NodeName);
+
+                _storage.EnsureVolumeDirectoryCreated(volumeId);
+            }
+            else if (string.Equals(lastKnownNode, _options.NodeName, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogInformation("Volume {VolumeId} is already owned by this node {NodeName}.", volumeId, _options.NodeName);
+                if (_storage.ExistsAndHasData(volumeId))
+                {
+                    _logger.LogInformation("Volume {VolumeId} already exists on this node {NodeName}. No action needed.", volumeId, _options.NodeName);
                 }
-                else if (string.Equals(lastKnownNode, _options.NodeName, StringComparison.OrdinalIgnoreCase))
+                else
                 {
                     _logger.LogWarning("Volume {VolumeId} was owned by this node ({NodeName}), but local data is missing.", volumeId, _options.NodeName);
 
@@ -78,22 +84,28 @@ namespace DryDock.Services.Csi
                         throw new RpcException(new Status(StatusCode.Unavailable, $"Failed to find {volumeId} on node '{lastKnownNode}' and backup was not available."));
                     }
                 }
-                else
+            }
+            else
+            {
+                _logger.LogInformation("Volume {VolumeId} last known on remote node {RemoteNode}. Initiating P2P pull to {LocalNode}...", volumeId, lastKnownNode, _options.NodeName);
+
+                if (_storage.ExistsAndHasData(volumeId))
                 {
-                    _logger.LogInformation("Volume {VolumeId} last known on remote node {RemoteNode}. Initiating P2P pull to {LocalNode}...", volumeId, lastKnownNode, _options.NodeName);
+                    _logger.LogWarning("Found stale local data for volume {VolumeId} on node {NodeName}. Deleting before P2P pull.", volumeId, _options.NodeName);
+                    _storage.DeleteVolumeDirectory(volumeId);
+                }
 
-                    bool synced = await _peerSync.TryPullVolumeAsync(lastKnownNode, volumeId, localSourcePath, context.CancellationToken);
+                bool synced = await _peerSync.TryPullVolumeAsync(lastKnownNode, volumeId, localSourcePath, context.CancellationToken);
 
-                    if (!synced && _options.IsBackupEnabled)
-                    {
-                        _logger.LogWarning("P2P Sync failed for {VolumeId}. Falling back to backup restore...", volumeId);
-                        synced = await TryRestoreFromBackupAsync(volumeId, localSourcePath, context.CancellationToken);
-                    }
+                if (!synced && _options.IsBackupEnabled)
+                {
+                    _logger.LogWarning("P2P Sync failed for {VolumeId}. Falling back to backup restore...", volumeId);
+                    synced = await TryRestoreFromBackupAsync(volumeId, localSourcePath, context.CancellationToken);
+                }
 
-                    if (!synced && !_storage.ExistsAndHasData(volumeId))
-                    {
-                        throw new RpcException(new Status(StatusCode.Unavailable, $"Failed to synchronize volume {volumeId} from peer '{lastKnownNode}' and backup was not available."));
-                    }
+                if (!synced && !_storage.ExistsAndHasData(volumeId))
+                {
+                    throw new RpcException(new Status(StatusCode.Unavailable, $"Failed to synchronize volume {volumeId} from peer '{lastKnownNode}' and backup was not available."));
                 }
             }
 
@@ -110,8 +122,11 @@ namespace DryDock.Services.Csi
                 throw new RpcException(new Status(StatusCode.Internal, $"Mount operation failed: {ex.Message}"));
             }
 
-            await UpdateVolumeOwnerAnnotationAsync(volumeId, _options.NodeName, context.CancellationToken);
-
+            if (!string.Equals(lastKnownNode, _options.NodeName, StringComparison.OrdinalIgnoreCase))
+            {
+                await UpdateVolumeOwnerAnnotationAsync(volumeId, _options.NodeName, context.CancellationToken);
+            }
+            
             return new NodePublishVolumeResponse();
         }
 
