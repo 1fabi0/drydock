@@ -1,27 +1,22 @@
 using Csi.V1;
-using DryDock.Configuration;
 using DryDock.Contract;
 using Grpc.Core;
-using Microsoft.Extensions.Options;
 
 namespace DryDock.Services.Csi
 {
     public class CsiControllerService : Controller.ControllerBase
     {
         private readonly IStorageManager _storage;
-        private readonly DryDockOptions _options;
         private readonly ILogger _logger;
-        private readonly IPeerSyncClient _peerSync;
+        private readonly IBackupClient _backupClient;
         public CsiControllerService(
             IStorageManager storage,
-            IOptions<DryDockOptions> options,
-            IPeerSyncClient peerSync,
+            IBackupClient backupClient,
             ILogger<CsiControllerService> logger)
         {
             _storage = storage;
-            _options = options.Value;
             _logger = logger;
-            _peerSync = peerSync;
+            _backupClient = backupClient;
         }
 
         public override Task<CreateVolumeResponse> CreateVolume(
@@ -74,8 +69,8 @@ namespace DryDock.Services.Csi
             }
 
             _storage.DeleteVolumeDirectory(request.VolumeId);
-            await _peerSync.DeleteVolumeOnAllPeersAsync(request.VolumeId, context.CancellationToken);
-
+            await _backupClient.DeleteVolumeBackupAsync(request.VolumeId, context.CancellationToken);
+          
             return new DeleteVolumeResponse();
         }
 

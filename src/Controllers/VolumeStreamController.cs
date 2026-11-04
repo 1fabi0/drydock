@@ -8,25 +8,30 @@ namespace DryDock.Controllers
     public class VolumeStreamController : ControllerBase
     {
         private readonly IStorageManager _storage;
+        private readonly IVolumeLocker _volumeLocker;
 
-        public VolumeStreamController(IStorageManager storage)
+        public VolumeStreamController(IStorageManager storage, IVolumeLocker volumeLocker)
         {
             _storage = storage;
+            _volumeLocker = volumeLocker;
         }
 
         [HttpGet("{volumeId}/stream")]
         public async Task GetVolumeTarZstStream(string volumeId, CancellationToken ct)
         {
-            string dirPath = _storage.GetVolumeDirectory(volumeId);
-            if (!Directory.Exists(dirPath))
+            using (await _volumeLocker.LockVolumeAsync(volumeId, ct))
             {
-                Response.StatusCode = StatusCodes.Status404NotFound;
-                return;
+                string dirPath = _storage.GetVolumeDirectory(volumeId);
+                if (!Directory.Exists(dirPath))
+                {
+                    Response.StatusCode = StatusCodes.Status404NotFound;
+                    return;
+                }
+
+                Response.ContentType = "application/x-zstd";
+
+                await TarZstdCompressor.CompressDirectoryToStreamAsync(dirPath, Response.Body, ct);
             }
-
-            Response.ContentType = "application/x-zstd";
-
-            await TarZstdCompressor.CompressDirectoryToStreamAsync(dirPath, Response.Body, ct);
         }
     }
 }

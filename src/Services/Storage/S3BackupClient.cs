@@ -62,7 +62,7 @@ namespace DryDock.Services.Storage
 
             try
             {
-                _logger.LogInformation("Load S3 Backup from Bucket {Bucket} for {VolumeId}...",_bucketName, volumeId);
+                _logger.LogInformation("Load S3 Backup from Bucket {Bucket} for {VolumeId}...", _bucketName, volumeId);
 
                 var request = new GetObjectRequest
                 {
@@ -99,6 +99,46 @@ namespace DryDock.Services.Storage
                 {
                     try { Directory.Delete(stagingDir, recursive: true); } catch { }
                 }
+            }
+        }
+
+        public async Task DeleteVolumeBackupAsync(string volumeId, CancellationToken cancellationToken)
+        {
+            string s3Key = $"volumes/{volumeId}.tar.zst";
+
+            try
+            {
+                try
+                {
+                    var metadataRequest = new GetObjectMetadataRequest
+                    {
+                        BucketName = _bucketName,
+                        Key = s3Key
+                    };
+                    await _s3Client.GetObjectMetadataAsync(metadataRequest, cancellationToken);
+                }
+                catch (AmazonS3Exception ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+                {
+                    _logger.LogInformation("No S3 backup found for volume {VolumeId} to delete (404 Not Found).", volumeId);
+                    return;
+                }
+
+                _logger.LogInformation("Deleting S3 backup for volume {VolumeId} from bucket {Bucket}...", volumeId, _bucketName);
+
+                var request = new DeleteObjectRequest
+                {
+                    BucketName = _bucketName,
+                    Key = s3Key
+                };
+
+                await _s3Client.DeleteObjectAsync(request, cancellationToken);
+
+                _logger.LogInformation("S3 backup for volume {VolumeId} successfully deleted.", volumeId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error while deleting S3 backup for volume {VolumeId}", volumeId);
+                throw;
             }
         }
     }

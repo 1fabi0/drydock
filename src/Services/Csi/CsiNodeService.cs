@@ -11,14 +11,14 @@ using Microsoft.Extensions.Options;
 namespace DryDock.Services.Csi
 {
     public class CsiNodeService : Node.NodeBase
-    {
-        private const string OwnerAnnotationKey = "drydock.io/current-node";
+    {  
         private readonly IStorageManager _storage;
         private readonly IPeerSyncClient _peerSync;
         private readonly IBackupClient _backup;
         private readonly DryDockOptions _options;
         private readonly IKubernetes _k8sClient;
         private readonly ILogger _logger;
+        private readonly IVolumeLocker _volumeLocker;
 
         public CsiNodeService(
         IStorageManager storage,
@@ -26,7 +26,9 @@ namespace DryDock.Services.Csi
         IBackupClient backup,
         IKubernetes k8sClient,
         IOptions<DryDockOptions> options,
-        ILogger<CsiNodeService> logger)
+        ILogger<CsiNodeService> logger,
+        IVolumeLocker volumeLocker
+        )
         {
             _storage = storage;
             _peerSync = peerSync;
@@ -34,12 +36,14 @@ namespace DryDock.Services.Csi
             _logger = logger;
             _options = options.Value;
             _k8sClient = k8sClient;
+            _volumeLocker = volumeLocker;
         }
 
         public override async Task<NodePublishVolumeResponse> NodePublishVolume(
             NodePublishVolumeRequest request, ServerCallContext context)
         {
             string volumeId = request.VolumeId;
+
             string targetPath = request.TargetPath;
 
             if (string.IsNullOrWhiteSpace(volumeId))
@@ -51,6 +55,8 @@ namespace DryDock.Services.Csi
             {
                 throw new RpcException(new Status(StatusCode.InvalidArgument, "TargetPath must be specified."));
             }
+
+            using var scopeLock = await _volumeLocker.LockVolumeAsync(volumeId, context.CancellationToken);
 
             string localSourcePath = _storage.GetVolumeDirectory(volumeId);
 
@@ -126,8 +132,9 @@ namespace DryDock.Services.Csi
             {
                 await UpdateVolumeOwnerAnnotationAsync(volumeId, _options.NodeName, context.CancellationToken);
             }
-            
+
             return new NodePublishVolumeResponse();
+
         }
 
         private async Task<string?> GetVolumeOwnerNodeAsync(string volumeId, CancellationToken cancellationToken)
@@ -136,7 +143,7 @@ namespace DryDock.Services.Csi
             {
                 var pv = await _k8sClient.CoreV1.ReadPersistentVolumeAsync(volumeId, cancellationToken: cancellationToken);
                 if (pv.Metadata?.Annotations != null &&
-                    pv.Metadata.Annotations.TryGetValue(OwnerAnnotationKey, out var ownerNode) &&
+                    pv.Metadata.Annotations.TryGetValue(DryDockOptions.OwnerAnnotationKey, out var ownerNode) &&
                     !string.IsNullOrWhiteSpace(ownerNode))
                 {
                     return ownerNode;
@@ -164,7 +171,7 @@ namespace DryDock.Services.Csi
                     {
                         annotations = new Dictionary<string, string>
                         {
-                            [OwnerAnnotationKey] = currentNode
+                            [DryDockOptions.OwnerAnnotationKey] = currentNode
                         }
                     }
                 };
@@ -199,11 +206,27 @@ namespace DryDock.Services.Csi
             }
         }
 
-        public override Task<NodeUnpublishVolumeResponse> NodeUnpublishVolume(
+        public override async Task<NodeUnpublishVolumeResponse> NodeUnpublishVolume(
             NodeUnpublishVolumeRequest request, ServerCallContext context)
         {
+            string volumeId = request.VolumeId;
+            string targetPath = request.TargetPath;
+
+            if (string.IsNullOrWhiteSpace(volumeId))
+            {
+                throw new RpcException(new Status(StatusCode.InvalidArgument, "VolumeId must be specified."));
+            }
+            if (string.IsNullOrWhiteSpace(targetPath))
+            {
+                throw new RpcException(new Status(StatusCode.InvalidArgument, "TargetPath must be specified."));
+            }
+
+            _logger.LogInformation("CSI NodeUnpublishVolume called for VolumeId: {VolumeId}, TargetPath: {TargetPath}", volumeId, targetPath);
+
+            using var scopeLock = await _volumeLocker.LockVolumeAsync(volumeId, context.CancellationToken);
+
             LinuxMount.Unmount(request.TargetPath);
-            return Task.FromResult(new NodeUnpublishVolumeResponse());
+            return new NodeUnpublishVolumeResponse();
         }
 
         public override Task<NodeGetCapabilitiesResponse> NodeGetCapabilities(

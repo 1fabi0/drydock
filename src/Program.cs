@@ -66,6 +66,7 @@ namespace DryDock
 
             builder.Services.AddSingleton<ICertificateHolder, CertificateHolder>();
             builder.Services.AddSingleton<IStorageManager, LocalStorageManager>();
+            builder.Services.AddSingleton<IVolumeLocker, VolumeLocker>();
             builder.Services.AddHttpClient<IPeerSyncClient, PeerSyncClient>(client =>
             {
                 client.DefaultRequestVersion = HttpVersion.Version30;
