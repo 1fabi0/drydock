@@ -3,7 +3,7 @@ namespace DryDock.Configuration
     public class DryDockOptions
     {
         public const string Section = "DryDock";
-
+        public const string OwnerAnnotationKey = "drydock.io/current-node";
         public string CSIUnixSocketPath { get; set; } = "/var/lib/kubelet/plugins/csi-drydock.sock";
         public int VolumeSyncingPort { get; set; } = 50443;
         public string LocalStorageRoot { get; set; } = "/var/lib/drydock/volumes";
@@ -23,5 +23,6 @@ namespace DryDock.Configuration
         public string BackupCronExpression { get; set; } = "0 2 * * *";
         public string Namespace { get; set; } = "default";
         public string MatchLabels { get; set; } = string.Empty;
+        public string CleanupCronExpression { get; set; } = "*/15 * * * *";
     }
 }

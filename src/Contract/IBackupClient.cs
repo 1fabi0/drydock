@@ -4,5 +4,6 @@ namespace DryDock.Contract
     {
         Task DownloadVolumeAsync(string volumeId, string localSourcePath, CancellationToken cancellationToken);   
         Task BackupVolumeAsync(string volumeId, string localSourcePath, CancellationToken cancellationToken);
+        Task DeleteVolumeBackupAsync(string volumeId, CancellationToken cancellationToken);
     }
 }
