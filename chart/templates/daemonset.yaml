@@ -51,6 +51,8 @@ spec:
               value: {{ include "drydock.namespace" . | quote }}
             - name: DryDock__MatchLabels
               value: {{ include "drydock.matchLabelsSelector" . | quote }}
+            - name: DryDock__VolumeCleanupThresholdSeconds
+              value: {{ .Values.storage.volumeCleanupThresholdSeconds | quote }}
             {{- if .Values.backup.enabled }}
             - name: DryDock__IsBackupEnabled
               value: "true"

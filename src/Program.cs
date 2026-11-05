@@ -1,5 +1,4 @@
 using System.Net;
-using System.Security.Cryptography.X509Certificates;
 using Amazon.S3;
 using DryDock.Configuration;
 using DryDock.Contract;

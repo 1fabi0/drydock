@@ -21,7 +21,8 @@ storage:
   hostStorageRoot: /var/lib/drydock/volumes
   isDefault: true
   defaultReclaimPolicy: Delete
-
+  nodeCleanUpCronExpression: "*/15 * * * *"
+  volumeCleanupThresholdSeconds: 600
 kubelet:
   rootDir: /var/lib/kubelet
 

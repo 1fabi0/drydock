@@ -13,6 +13,7 @@ namespace DryDock.Services.Background
         private readonly ILogger _logger;
         private readonly IKubernetes _k8sClient;
         private readonly IVolumeLocker _volumeLocker;
+        private readonly TimeSpan _directoryAgeThreshold;
 
         public CleanupWorker(
             IStorageManager storage,
@@ -26,6 +27,7 @@ namespace DryDock.Services.Background
             _options = options.Value;
             _k8sClient = k8sClient;
             _volumeLocker = volumeLocker;
+            _directoryAgeThreshold = TimeSpan.FromSeconds(_options.VolumeCleanupThresholdSeconds);
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -52,7 +54,14 @@ namespace DryDock.Services.Background
 
                 if (stoppingToken.IsCancellationRequested) break;
 
-                await RunCleanupAsync(stoppingToken);
+                try
+                {
+                    await RunCleanupAsync(stoppingToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "An error occurred during the cleanup process.");
+                }
             }
         }
 
@@ -68,28 +77,55 @@ namespace DryDock.Services.Background
             }
 
             var volumeDirectories = Directory.EnumerateDirectories(rootDir);
-            var volumeIds = volumeDirectories.Select(GetVolumeIdFromDirectoryName).ToList();
-            var activeVolumeIds = await _k8sClient.CoreV1.ListPersistentVolumeAsync(cancellationToken: ct, labelSelector: DryDockOptions.OwnerAnnotationKey + "=" + _options.NodeName);
+            var volumeIds = volumeDirectories
+                .Select(GetVolumeIdFromDirectoryName)
+                .Where(id => !string.IsNullOrEmpty(id))
+                .ToList();
+
+            if (volumeIds.Count == 0)
+            {
+                _logger.LogInformation("No valid volume directories found. Skipping cleanup cycle.");
+                return;
+            }
+
+            var activeVolumeIds = await _k8sClient.CoreV1.ListPersistentVolumeAsync(cancellationToken: ct);
+            var localVolumeIds = activeVolumeIds.Items
+                .Where(pv => pv.Metadata?.Annotations != null &&
+                             pv.Metadata.Annotations.TryGetValue(DryDockOptions.OwnerAnnotationKey, out var owner) &&
+                             string.Equals(owner, _options.NodeName, StringComparison.OrdinalIgnoreCase))
+                .Select(pv => pv.Metadata.Name)
+                .Where(name => !string.IsNullOrEmpty(name))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
             foreach (var volumeId in volumeIds)
             {
-
-                if (activeVolumeIds.Items.Any(pv => string.Equals(pv.Metadata?.Name, volumeId)))
+                if (localVolumeIds.Contains(volumeId))
                 {
                     _logger.LogInformation("Volume '{VolumeId}' is still active. Skipping cleanup.", volumeId);
                     continue;
                 }
-                else if(_volumeLocker.IsVolumeLocked(volumeId))
+
+                var volumeLastWriteTime = Directory.GetLastWriteTimeUtc(Path.Combine(rootDir, volumeId));
+                if (DateTime.UtcNow - volumeLastWriteTime < _directoryAgeThreshold)
+                {
+                    _logger.LogInformation("Volume '{VolumeId}' was created less than {Threshold} ago. Skipping cleanup.", volumeId, _directoryAgeThreshold);
+                    continue;
+                }
+
+                if (_volumeLocker.IsVolumeLocked(volumeId))
                 {
                     _logger.LogInformation("Volume '{VolumeId}' is currently locked. Skipping cleanup.", volumeId);
                     continue;
                 }
-                else if(LinuxMountDetector.IsPathMounted(Path.Combine(rootDir, volumeId), volumeId))
+
+                using (await _volumeLocker.LockVolumeAsync(volumeId, ct))
                 {
-                    _logger.LogInformation("Volume '{VolumeId}' is currently mounted. Skipping cleanup.", volumeId);
-                    continue;
-                }
-                else
-                {
+                    var dirPath = Path.Combine(rootDir, volumeId);
+                    if (LinuxMountDetector.IsPathMounted(dirPath, volumeId))
+                    {
+                        _logger.LogInformation("Volume '{VolumeId}' is still mounted. Skipping cleanup.", volumeId);
+                        continue;
+                    }
                     _logger.LogInformation("Volume '{VolumeId}' is no longer active on this node. Proceeding with cleanup.", volumeId);
                     _storage.DeleteVolumeDirectory(volumeId);
                 }

@@ -24,5 +24,6 @@ namespace DryDock.Configuration
         public string Namespace { get; set; } = "default";
         public string MatchLabels { get; set; } = string.Empty;
         public string CleanupCronExpression { get; set; } = "*/15 * * * *";
+        public int VolumeCleanupThresholdSeconds { get; set; } = 600;
     }
 }
