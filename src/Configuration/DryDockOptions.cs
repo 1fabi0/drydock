@@ -4,6 +4,8 @@ namespace DryDock.Configuration
     {
         public const string Section = "DryDock";
         public const string OwnerAnnotationKey = "drydock.io/current-node";
+        public const string BackupAnnotationKey = "drydock.io/backup-enabled";
+        public bool DefaultBackupEnabled { get; set; } = true;
         public string CSIUnixSocketPath { get; set; } = "/var/lib/kubelet/plugins/csi-drydock.sock";
         public int VolumeSyncingPort { get; set; } = 50443;
         public string LocalStorageRoot { get; set; } = "/var/lib/drydock/volumes";
