@@ -70,6 +70,8 @@ spec:
             {{- if .Values.backup.enabled }}
             - name: DryDock__IsBackupEnabled
               value: "true"
+            - name: DryDock__DefaultBackupEnabled
+              value: {{ .Values.backup.defaultBackupEnabled | quote }}
             - name: DryDock__BackupCronExpression
               value: {{ .Values.backup.cronExpression | quote }}
             - name: Drydock__BackupS3Endpoint
