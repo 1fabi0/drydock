@@ -12,4 +12,4 @@ volumeBindingMode: WaitForFirstConsumer
 reclaimPolicy: {{ .Values.storage.defaultReclaimPolicy }}
 allowVolumeExpansion: false
 parameters:
-  backupEnabled: {{ .Values.backup.enabled | quote }}
+  backupEnabled: {{ .Values.backup.defaultBackupEnabled | quote }}
