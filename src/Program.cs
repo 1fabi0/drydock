@@ -49,9 +49,11 @@ namespace DryDock
                             listenOptions.ApplicationServices.GetRequiredService<ICertificateHolder>().GetCertificate();
                         httpsOptions.ClientCertificateMode = ClientCertificateMode.RequireCertificate;
 
+                        var certHolder = listenOptions.ApplicationServices.GetRequiredService<ICertificateHolder>();
+
                         httpsOptions.ClientCertificateValidation = (cert, chain, errors) =>
                         {
-                            return listenOptions.ApplicationServices.GetRequiredService<ICertificateHolder>().ValidateRemoteCertificate(cert);
+                            return certHolder.ValidateRemoteCertificate(cert);
                         };
                     });
                 });
@@ -66,6 +68,8 @@ namespace DryDock
             builder.Services.AddSingleton<ICertificateHolder, CertificateHolder>();
             builder.Services.AddSingleton<IStorageManager, LocalStorageManager>();
             builder.Services.AddSingleton<IVolumeLocker, VolumeLocker>();
+            builder.Services.AddSingleton<ICertificateProvider, CertManagerDynamicProvider>();
+            builder.Services.AddSingleton<ICertificateFileCache, CertificateFileCache>();
             builder.Services.AddHttpClient<IPeerSyncClient, PeerSyncClient>(client =>
             {
                 client.DefaultRequestVersion = HttpVersion.Version30;
@@ -92,6 +96,7 @@ namespace DryDock
             builder.Services.AddGrpc();
             builder.Services.AddControllers();
             builder.Services.AddHostedService<CapacityReporterWorker>();
+            builder.Services.AddHostedService<CertificateRenewWorker>();
 
             var host = builder.Build();
 
@@ -105,6 +110,8 @@ namespace DryDock
                         UnixFileMode.OtherRead | UnixFileMode.OtherWrite);
                 }
             });
+
+            await host.Services.GetRequiredService<ICertificateHolder>().InitializeAsync(host.Lifetime.ApplicationStopping);
 
             host.MapGrpcService<CsiIdentityService>();
             host.MapGrpcService<CsiNodeService>();

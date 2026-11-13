@@ -1,47 +1,34 @@
-using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
-using DryDock.Configuration;
 using DryDock.Contract;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace DryDock.Services.Certificate
 {
     public class CertificateHolder : ICertificateHolder
     {
-        private readonly string _certPath;
-        private readonly string _keyPath;
-        private readonly string _caCertPath;
         private readonly ILogger _logger;
-        private readonly object _lock = new();
+        private readonly ICertificateFileCache _certFileCache;
+        private readonly ICertificateProvider _certProvider;
+        private X509Certificate2? _currentCert;
+        private X509Certificate2? _currentCaCert;
 
-        private volatile X509Certificate2? _currentCert;
-        private DateTime _lastCertWriteTime = DateTime.MinValue;
-
-        private volatile X509Certificate2? _cachedCaCert;
-        private DateTime _lastCaWriteTime = DateTime.MinValue;
-
-        private long _lastCheckTicks = 0;
-        private static readonly TimeSpan CheckInterval = TimeSpan.FromHours(1);
-
-        public CertificateHolder(IOptions<DryDockOptions> options, ILogger<CertificateHolder> logger)
+        public CertificateHolder(
+            ILogger<CertificateHolder> logger,
+            ICertificateFileCache certFileCache,
+            ICertificateProvider certProvider)
         {
-            _certPath = options.Value.CertPath;
-            _keyPath = options.Value.KeyPath;
-            _caCertPath = options.Value.CaCertPath;
+            _certFileCache = certFileCache;
+            _certProvider = certProvider;
             _logger = logger;
         }
 
         public X509Certificate2 GetCertificate()
         {
-            EnsureFreshCertificates();
-            return _currentCert ?? throw new InvalidOperationException($"Node certificate could not be loaded from {_certPath}");
+            return _currentCert ?? throw new InvalidOperationException($"Node certificate is not loaded yet. Please call InitializeAsync() first.");
         }
 
-        public X509Certificate2? GetCaCertificate()
+        public X509Certificate2 GetCaCertificate()
         {
-            EnsureFreshCertificates();
-            return _cachedCaCert;
+            return _currentCaCert ?? throw new InvalidOperationException($"Cluster CA certificate is not loaded yet. Please call InitializeAsync() first.");
         }
 
         public bool ValidateRemoteCertificate(X509Certificate? certificate)
@@ -51,7 +38,7 @@ namespace DryDock.Services.Certificate
                 return false;
             }
 
-            var ca = GetCaCertificate();
+            var ca = _currentCaCert;
             if (ca == null)
             {
                 _logger.LogWarning("Cluster CA is not available, remote certificate validation rejected.");
@@ -74,73 +61,43 @@ namespace DryDock.Services.Certificate
             return isValid;
         }
 
-        private void EnsureFreshCertificates()
+        public async Task InitializeAsync(CancellationToken cancellationToken = default)
         {
-            var nowTicks = Environment.TickCount64;
-            var lastCheck = Interlocked.Read(ref _lastCheckTicks);
+            var cert = _certFileCache.ReadCertificateFromFile();
+            var caCert = _certFileCache.ReadCaCertificateFromFile();
 
-            if (_currentCert != null && _cachedCaCert != null && TimeSpan.FromMilliseconds(nowTicks - lastCheck) < CheckInterval)
+            if (cert != null && caCert != null)
             {
+                _currentCert = cert;
+                _currentCaCert = caCert;
                 return;
             }
 
-            Interlocked.Exchange(ref _lastCheckTicks, nowTicks);
+            (cert, caCert) = await _certProvider.RequestNewCertificateAsync(cancellationToken);
+            _certFileCache.WriteCertificateToFile(cert);
+            _certFileCache.WriteCaCertificateToFile(caCert);
 
-            lock (_lock)
-            {
-                CheckAndReloadNodeCert();
-                CheckAndReloadCaCert();
-            }
+            _currentCert = cert;
+            _currentCaCert = caCert;
         }
 
-        private void CheckAndReloadNodeCert()
+        public void SwapCertificates(X509Certificate2 newCert, X509Certificate2 newCaCert)
         {
-            if (!File.Exists(_certPath) || !File.Exists(_keyPath)) return;
+            _certFileCache.WriteCertificateToFile(newCert);
+            _certFileCache.WriteCaCertificateToFile(newCaCert);
 
-            var certTime = File.GetLastWriteTimeUtc(_certPath);
-            var keyTime = File.GetLastWriteTimeUtc(_keyPath);
-            var latest = certTime > keyTime ? certTime : keyTime;
+            var oldCert = Interlocked.Exchange(ref _currentCert, newCert);
+            var oldCaCert = Interlocked.Exchange(ref _currentCaCert, newCaCert);
 
-            if (_currentCert == null || latest > _lastCertWriteTime)
-            {
-                try
-                {
-                    _currentCert = X509Certificate2.CreateFromPemFile(_certPath, _keyPath);
-                    _lastCertWriteTime = latest;
-                    _logger.LogInformation("Node certificate loaded/reloaded successfully.");
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to load node certificate from {Path}", _certPath);
-                    if (_currentCert == null) throw;
-                }
-            }
-        }
+            oldCert?.Dispose();
+            oldCaCert?.Dispose();
 
-        private void CheckAndReloadCaCert()
-        {
-            if (string.IsNullOrEmpty(_caCertPath) || !File.Exists(_caCertPath)) return;
-
-            var caTime = File.GetLastWriteTimeUtc(_caCertPath);
-            if (_cachedCaCert == null || caTime > _lastCaWriteTime)
-            {
-                try
-                {
-                    _cachedCaCert = X509CertificateLoader.LoadCertificateFromFile(_caCertPath);
-                    _lastCaWriteTime = caTime;
-                    _logger.LogInformation("Cluster CA loaded/reloaded from {Path}", _caCertPath);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to load CA certificate from {Path}", _caCertPath);
-                }
-            }
         }
 
         public void Dispose()
         {
             _currentCert?.Dispose();
-            _cachedCaCert?.Dispose();
+            _currentCaCert?.Dispose();
         }
     }
 }

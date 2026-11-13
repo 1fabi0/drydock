@@ -18,6 +18,7 @@ namespace DryDock.Configuration
         public string BackupS3Endpoint { get; set; } = string.Empty;
         public string BackupS3Bucket { get; set; } = string.Empty;
         public string NodeName { get; set; } = string.Empty;
+        public string NodeIp { get; set; } = string.Empty;
         public string StorageClassName { get; set; } = "drydock";
         public int CapacityReportIntervalSeconds { get; set; } = 300;
         public string PluginVersion { get; set; } = "0.0.1";
@@ -27,5 +28,9 @@ namespace DryDock.Configuration
         public string MatchLabels { get; set; } = string.Empty;
         public string CleanupCronExpression { get; set; } = "*/15 * * * *";
         public int VolumeCleanupThresholdSeconds { get; set; } = 600;
+        public string CertManagerIssuerName { get; set; } = "drydock-issuer";
+        public string CertManagerIssuerKind { get; set; } = "Issuer";
+        public string CertificateDuration { get; set; } = "90d";
+        public int CertificateRenewBeforeSeconds { get; set; } = 2592000; // 30 days
     }
 }

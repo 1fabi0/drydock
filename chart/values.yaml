@@ -31,12 +31,14 @@ network:
   hostNetwork: true # Allows QUIC/UDP Node-to-Node Direct Access without Overlay-NAT-Overhead
 
 tls:
+  nodeCacheCertPath: /var/lib/drydock/pki
+  certificate:
+    duration: 2160h # 90 Days
+    renewBeforeSeconds: 2592000 # 30 Days
   certManager:
     enabled: true
     createSelfSignedCA: true
-    secretName: ""
-    duration: 2160h # 90 Days
-    renewBefore: 360h # 15 Days
+    
 
 backup:
   enabled: false
