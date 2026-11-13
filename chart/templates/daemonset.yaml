@@ -27,6 +27,14 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
+            - name: DryDock__Namespace
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: DryDock__NodeIp
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
             - name: DryDock__LocalStorageRoot
               value: {{ .Values.storage.hostStorageRoot | quote }}
             - name: DryDock__CSIUnixSocketPath
@@ -47,12 +55,18 @@ spec:
               value: {{ .Values.storage.nodeCleanUpCronExpression | quote }}
             - name: DryDock__PluginVersion
               value: {{ default .Chart.AppVersion .Values.image.tag | quote }}
-            - name: DryDock__Namespace
-              value: {{ include "drydock.namespace" . | quote }}
             - name: DryDock__MatchLabels
               value: {{ include "drydock.matchLabelsSelector" . | quote }}
             - name: DryDock__VolumeCleanupThresholdSeconds
               value: {{ .Values.storage.volumeCleanupThresholdSeconds | quote }}
+            - name: DryDock__CertManagerIssuerName
+              value: {{ include "drydock.issuerName" . }}
+            - name: DryDock__CertManagerIssuerKind
+              value: "Issuer"
+            - name: DryDock__CertificateDuration
+              value: {{ .Values.tls.certificate.duration | quote }}
+            - name: DryDock__CertificateRenewBefore
+              value: {{ .Values.tls.certificate.renewBeforeSeconds | quote }}
             {{- if .Values.backup.enabled }}
             - name: DryDock__IsBackupEnabled
               value: "true"
@@ -136,25 +150,6 @@ spec:
             path: {{ .Values.storage.hostStorageRoot }}
             type: DirectoryOrCreate
         - name: certs
-          projected:
-            sources:
-              - secret:
-                  name: {{ include "drydock.tlsSecretName" . }}
-                  items:
-                    - key: tls.crt
-                      path: tls.crt
-                    - key: tls.key
-                      path: tls.key
-              {{- if .Values.tls.certManager.createSelfSignedCA }}
-              - secret:
-                  name: {{ include "drydock.fullname" . }}-root-ca-secret
-                  items:
-                    - key: tls.crt
-                      path: ca.crt
-              {{- else }}
-              - secret:
-                  name: {{ include "drydock.tlsSecretName" . }}
-                  items:
-                    - key: ca.crt
-                      path: ca.crt
-              {{- end }}
+          hostPath:
+            path: {{ .Values.tls.nodeCacheCertPath }}
+            type: DirectoryOrCreate

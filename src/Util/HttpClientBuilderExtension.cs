@@ -23,14 +23,17 @@ namespace DryDock.Util
 
                         RemoteCertificateValidationCallback = (sender, certificate, chain, sslPolicyErrors) =>
                         {
-                            if (certificate == null) return false;
-
-                            if (!certHolder.ValidateRemoteCertificate(certificate))
+                            if (certificate == null) 
                             {
                                 return false;
                             }
 
-                            return (sslPolicyErrors & ~(SslPolicyErrors.RemoteCertificateChainErrors | SslPolicyErrors.RemoteCertificateNameMismatch)) == SslPolicyErrors.None;
+                            if ((sslPolicyErrors & SslPolicyErrors.RemoteCertificateNameMismatch) != 0)
+                            {
+                                return false;
+                            }
+
+                            return certHolder.ValidateRemoteCertificate(certificate);
                         }
                     }
                 };
