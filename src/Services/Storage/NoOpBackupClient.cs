@@ -13,5 +13,10 @@ namespace DryDock.Services.Storage
         {
             throw new NotImplementedException("Backup is not activated. Please configure a backup client in the DryDock configuration.");
         }
+
+        public Task DeleteVolumeBackupAsync(string volumeId, CancellationToken cancellationToken)
+        {
+            throw new NotImplementedException("Backup is not activated. Please configure a backup client in the DryDock configuration.");
+        }
     }
 }
