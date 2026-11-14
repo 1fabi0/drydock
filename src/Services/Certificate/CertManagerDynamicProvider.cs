@@ -56,17 +56,17 @@ namespace DryDock.Services.Certificate
                     Name = crName,
                     NamespaceProperty = namespaceName
                 },
-                Usages = new List<string>
-                {
-                    "digital signature",
-                    "key encipherment",
-                    "server auth",
-                    "client auth"
-                },
                 Spec = new CertificateRequestSpec
                 {
                     Request = Convert.ToBase64String(Encoding.UTF8.GetBytes(csrPem)),
                     Duration = _options.CertificateDuration,
+                    Usages = new List<string>
+                    {
+                        "digital signature",
+                        "key encipherment",
+                        "server auth",
+                        "client auth"
+                    },
                     IssuerRef = new ObjectReference
                     {
                         Name = _options.CertManagerIssuerName,
