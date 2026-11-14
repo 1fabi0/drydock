@@ -30,7 +30,6 @@ namespace DryDock.Util.Security
 
             request.CertificateExtensions.Add(sanBuilder.Build());
 
-            // KeyUsage & ExtendedKeyUsage für mTLS
             request.CertificateExtensions.Add(
                 new X509KeyUsageExtension(
                     X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment,

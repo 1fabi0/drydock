@@ -56,6 +56,13 @@ namespace DryDock.Services.Certificate
                     Name = crName,
                     NamespaceProperty = namespaceName
                 },
+                Usages = new List<string>
+                {
+                    "digital signature",
+                    "key encipherment",
+                    "server auth",
+                    "client auth"
+                },
                 Spec = new CertificateRequestSpec
                 {
                     Request = Convert.ToBase64String(Encoding.UTF8.GetBytes(csrPem)),
@@ -69,6 +76,7 @@ namespace DryDock.Services.Certificate
             };
 
             _logger.LogInformation("Submitting CertificateRequest '{Name}' to cert-manager in namespace '{Namespace}'...", crName, namespaceName);
+            var created = false;
             try
             {
                 await _k8sClient.CustomObjects.CreateNamespacedCustomObjectAsync(
@@ -78,6 +86,8 @@ namespace DryDock.Services.Certificate
                     namespaceParameter: namespaceName,
                     plural: "certificaterequests",
                     cancellationToken: cancellationToken);
+
+                created = true;
 
                 var status = await WaitForSigningAsync(crName, namespaceName, cancellationToken);
 
@@ -112,13 +122,16 @@ namespace DryDock.Services.Certificate
             {
                 try
                 {
-                    await _k8sClient.CustomObjects.DeleteNamespacedCustomObjectAsync(
-                        group: "cert-manager.io",
-                        version: "v1",
-                        namespaceParameter: namespaceName,
-                        plural: "certificaterequests",
-                        name: crName,
-                        cancellationToken: CancellationToken.None);
+                    if(created)
+                    {
+                        await _k8sClient.CustomObjects.DeleteNamespacedCustomObjectAsync(
+                            group: "cert-manager.io",
+                            version: "v1",
+                            namespaceParameter: namespaceName,
+                            plural: "certificaterequests",
+                            name: crName,
+                            cancellationToken: CancellationToken.None);
+                    }
                 }
                 catch (Exception ex)
                 {
