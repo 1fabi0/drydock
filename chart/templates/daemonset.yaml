@@ -103,7 +103,6 @@ spec:
               mountPropagation: Bidirectional
             - name: certs
               mountPath: /certs
-              readOnly: true
 
         - name: node-driver-registrar
           image: {{ .Values.sidecars.registrar.image }}
